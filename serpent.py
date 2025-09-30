@@ -15,6 +15,8 @@ import importlib.util
 from pathlib import Path
 
 
+VERSION = "1.0.0"
+
 BACKSPACE = 127
 ENTER = ord('\n')
 TABULATOR = ord('\t')
@@ -184,6 +186,10 @@ def __get_default_filters(binary: bool) -> tuple:
 
 
 def main() -> int:
+    if "--version" in sys.argv:
+        print(f"serpent v{VERSION}")
+        return 0
+
     parser = argparse.ArgumentParser(
         description="Serial Command Prompt"
     )
