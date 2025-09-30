@@ -18,8 +18,6 @@ from pathlib import Path
 VERSION = "1.0.0"
 
 BACKSPACE = 127
-ENTER = ord('\n')
-TABULATOR = ord('\t')
 ESCAPE = 27
 
 KEY_UP = b'[A'
@@ -42,6 +40,7 @@ class Prompt:
         self.__echo = echo
         self.__prompt = ""
         self.__output_queue = Queue()
+        self.__history = []
 
 
     def __del__(self):
@@ -65,10 +64,15 @@ class Prompt:
                     self.__output_queue.put("> " + self.__prompt)
 
                 line_read = self.__prompt
+                self.__history.append(line_read)
                 
                 self.__prompt = ""
+            elif c == b'\t':
+                self.__autocomplete()
             else:
-                self.__prompt = self.__prompt + str(c, "ascii")
+                s = str(c, "ascii")
+                if s.isprintable():
+                    self.__prompt = self.__prompt + s
 
         # delete prompt
         print("\r\033[2K", end="", flush=True)
@@ -86,6 +90,12 @@ class Prompt:
 
     def print(self, line):
         self.__output_queue.put(line)
+
+
+    def __autocomplete(self) -> str:
+        for i in range(len(self.__history) - 1, -1, -1):
+            if self.__history[i].startswith(self.__prompt):
+                self.__prompt = self.__history[i]
 
 
 class Serpent:
