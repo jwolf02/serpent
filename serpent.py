@@ -29,6 +29,65 @@ INPUT_FILTER = "serpent_input_filter"
 OUTPUT_FILTER = "serpent_output_filter"
 
 
+class Prompt:
+    def __init__(self, echo: bool):
+        self.__fd = sys.stdin.fileno()
+        self.__old_settings = termios.tcgetattr(self.__fd)
+
+        self.__orig_fl = fcntl.fcntl(sys.stdin, fcntl.F_GETFL)
+        fcntl.fcntl(sys.stdin, fcntl.F_SETFL, self.__orig_fl | os.O_NONBLOCK)
+
+        tty.setcbreak(sys.stdin)
+
+        self.__echo = echo
+        self.__prompt = ""
+        self.__output_queue = Queue()
+
+
+    def __del__(self):
+        termios.tcsetattr(self.__fd, termios.TCSADRAIN, self.__old_settings)
+
+
+    def paint(self) -> str:
+        """
+        Paint the prompt on the terminal and return a line of user input
+        if enter has been pressed, otherwise None.
+        """
+
+        line_read = None
+
+        c = sys.stdin.buffer.read(1)
+        if c:
+            if ord(c) == BACKSPACE and len(self.__prompt) >= 1:
+                self.__prompt = self.__prompt[:-1]
+            elif c == b'\n':
+                if self.__echo:
+                    self.__output_queue.put("> " + self.__prompt)
+
+                line_read = self.__prompt
+                
+                self.__prompt = ""
+            else:
+                self.__prompt = self.__prompt + str(c, "ascii")
+
+        # delete prompt
+        print("\r\033[2K", end="", flush=True)
+
+        if self.__output_queue.empty() == False:
+            line = self.__output_queue.get_nowait()
+
+            print(line)
+
+        # reprint prompt
+        print("\r\033[2K>", self.__prompt, end='', flush=True)
+        
+        return line_read
+
+
+    def print(self, line):
+        self.__output_queue.put(line)
+
+
 class Serpent:
     def __init__(self, 
                  serial: serial.Serial,
@@ -39,10 +98,9 @@ class Serpent:
         self.__serial = serial
         self.__input_filter = input_filter
         self.__output_filter = output_filter
-        self.__echo = echo
         self.__extra_args = extra_args
-        self.__output_queue = Queue()
         self.__stop_event = threading.Event()
+        self.__prompt = Prompt(echo)
 
 
     def run(self):
@@ -50,53 +108,23 @@ class Serpent:
         thread.daemon = True
         thread.start()
 
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-
-        orig_fl = fcntl.fcntl(sys.stdin, fcntl.F_GETFL)
-        fcntl.fcntl(sys.stdin, fcntl.F_SETFL, orig_fl | os.O_NONBLOCK)
-
         try:
-            tty.setcbreak(sys.stdin)
-
-            prompt = ""
             while True:
-                c = sys.stdin.buffer.read(1)
-                if c:
-                    if ord(c) == BACKSPACE and len(prompt) >= 1:
-                        prompt = prompt[:-1]
-                    elif c == b'\n':
-                        if self.__echo:
-                            self.__output_queue.put("> " + prompt)
-
-                        cmd = self.__output_filter(prompt, self.__extra_args)
-                        if cmd is not None:
-                            self.__serial.write(cmd)
-                        prompt = ""
-                    else:
-                        prompt = prompt + str(c, "ascii")
-
-                # delete prompt
-                print("\r\033[2K", end="", flush=True)
-
+                user_input = self.__prompt.paint()
+                if user_input:
+                    cmd = self.__output_filter(user_input, self.__extra_args)
+                    if cmd:
+                        self.__serial.write(cmd)
+                
                 if self.__stop_event.is_set():
                     raise Exception("Connection closed unexpectedly")
-
-                if self.__output_queue.empty() == False:
-                    line = self.__output_queue.get_nowait()
-
-                    print(line)
-
-                # reprint prompt
-                print("\r\033[2K>", prompt, end='', flush=True)
+                
                 sleep(0.01)
+
         except KeyboardInterrupt:
             print("r\033[2K\nTerminated")
         except Exception as ex:
             print(f"\r\033[2K\n{ex}")
-            raise ex
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
     def __read_serial(self):
@@ -108,7 +136,7 @@ class Serpent:
                 lines, buffer = self.__input_filter(buffer, self.__extra_args)
 
                 for line in lines:
-                    self.__output_queue.put(line)
+                    self.__prompt.print(line)
 
                 sleep(0.01)
         except:
