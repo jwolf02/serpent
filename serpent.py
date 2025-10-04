@@ -5,7 +5,6 @@ import serial
 import sys
 from queue import Queue
 from time import sleep
-from termcolor import colored
 import tty
 import threading
 import termios
@@ -18,10 +17,6 @@ from pathlib import Path
 VERSION = "1.0.1"
 
 BACKSPACE = 127
-ESCAPE = 27
-
-KEY_UP = b'[A'
-KEY_DOWN = b'[B'
 
 INPUT_FILTER = "serpent_input_filter"
 OUTPUT_FILTER = "serpent_output_filter"
@@ -213,7 +208,7 @@ def __default_binary_input_filter(data: bytes, extra_args: dict) -> tuple[list[s
 
 
 def __default_output_filter(user_input: str, extra_args: dict) -> bytes:
-    return user_input.encode("ascii")
+    return (user_input + '\n').encode("ascii")
 
 
 def __get_default_filters(binary: bool) -> tuple:
