@@ -11,7 +11,9 @@ import termios
 import fcntl
 import os
 import importlib.util
+import traceback
 from pathlib import Path
+from typing import Callable
 
 
 VERSION = "1.0.2"
@@ -91,21 +93,23 @@ class Prompt:
         for i in range(len(self.__history) - 1, -1, -1):
             if self.__history[i].startswith(self.__prompt):
                 self.__prompt = self.__history[i]
-
+                
 
 class Serpent:
     def __init__(self, 
                  serial: serial.Serial,
-                 input_filter,
-                 output_filter,
+                 input_filter: Callable[[bytearray, dict], tuple[list[str], bytearray]],
+                 output_filter: Callable[[str, dict], bytes],
                  echo: bool,
-                 extra_args: dict):
+                 extra_args: dict,
+                 record_file=None):
         self.__serial = serial
         self.__input_filter = input_filter
         self.__output_filter = output_filter
         self.__extra_args = extra_args
         self.__stop_event = threading.Event()
         self.__prompt = Prompt(echo)
+        self.__record_file = record_file
 
 
     def run(self):
@@ -122,7 +126,7 @@ class Serpent:
                         self.__serial.write(cmd)
                 
                 if self.__stop_event.is_set():
-                    raise Exception("Connection closed unexpectedly")
+                    raise Exception(f"Connection closed unexpectedly ({self.__message}, {self.__traceback})")
                 
                 sleep(0.01)
 
@@ -134,9 +138,15 @@ class Serpent:
 
     def __read_serial(self):
         try:
-            buffer = bytes()
+            buffer = bytearray()
             while True:
-                buffer = buffer + self.__serial.read_all()
+                data = self.__serial.read_all()
+
+                if data and self.__record_file is not None:
+                    self.__record_file.write(data)
+                    self.__record_file.flush()
+
+                buffer.extend(data)
 
                 lines, buffer = self.__input_filter(buffer, self.__extra_args)
 
@@ -144,7 +154,9 @@ class Serpent:
                     self.__prompt.print(line)
 
                 sleep(0.01)
-        except:
+        except Exception as ex:
+            self.__message = str(ex)
+            self.__traceback = traceback.format_exc()
             self.__stop_event.set()
 
 
@@ -189,7 +201,7 @@ def __get_config(config: str) -> tuple[int, bool, float]:
     return (b, p, s)
 
 
-def __default_text_input_filter(data: bytes, extra_args: dict) -> tuple[list[str], bytes]:
+def __default_text_input_filter(data: bytearray, extra_args: dict) -> tuple[list[str], bytearray]:
     lines = []
 
     while b'\n' in data:
@@ -203,8 +215,11 @@ def __default_text_input_filter(data: bytes, extra_args: dict) -> tuple[list[str
     return lines, data
 
 
-def __default_binary_input_filter(data: bytes, extra_args: dict) -> tuple[list[str], bytes]:
-    return [data.hex(), bytes()]
+def __default_binary_input_filter(data: bytearray, extra_args: dict) -> tuple[list[str], bytearray]:
+    if len(data) == 0:
+        return ([], bytearray())
+
+    return (['0x' + data.hex()], bytearray())
 
 
 def __default_output_filter(user_input: str, extra_args: dict) -> bytes:
@@ -260,6 +275,12 @@ def main() -> int:
         type=str,
         help=f"Filter plugin (must provide {INPUT_FILTER} and {OUTPUT_FILTER} functions)"
     )
+    parser.add_argument(
+        "--file", "-f",
+        type=str,
+        default=None,
+        help="Record raw received serial input to this file"
+    )
 
     args, unknown = parser.parse_known_args()
 
@@ -285,10 +306,16 @@ def main() -> int:
     except:
         print(f"Failed to open serial port '{port}'")
         return -1
-    
-    serpent = Serpent(ser, input_filter, output_filter, echo, extra_args)
-    serpent.run()
-    
+
+    record_file = open(args.file, "wb") if args.file else None
+
+    try:
+        serpent = Serpent(ser, input_filter, output_filter, echo, extra_args, record_file)
+        serpent.run()
+    finally:
+        if record_file is not None:
+            record_file.close()
+
     return 0
 
 

@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="serpent",
-    version="1.0.2",
+    version="1.0.5",
     install_requires=["pyserial"],
     py_modules=["serpent"],
     entry_points={
